@@ -8794,18 +8794,18 @@ impl<'a> Parser<'a> {
             Ok(Some(ColumnOption::Null))
         } else if self.parse_keyword(Keyword::DEFAULT) {
             Ok(Some(ColumnOption::Default(
-                self.parse_column_option_expr()?,
+                self.parse_expr()?,
             )))
         } else if dialect_of!(self is ClickHouseDialect| GenericDialect)
             && self.parse_keyword(Keyword::MATERIALIZED)
         {
             Ok(Some(ColumnOption::Materialized(
-                self.parse_column_option_expr()?,
+                self.parse_expr()?,
             )))
         } else if dialect_of!(self is ClickHouseDialect| GenericDialect)
             && self.parse_keyword(Keyword::ALIAS)
         {
-            Ok(Some(ColumnOption::Alias(self.parse_column_option_expr()?)))
+            Ok(Some(ColumnOption::Alias(self.parse_expr()?)))
         } else if dialect_of!(self is ClickHouseDialect| GenericDialect)
             && self.parse_keyword(Keyword::EPHEMERAL)
         {
@@ -8815,7 +8815,7 @@ impl<'a> Parser<'a> {
                 Ok(Some(ColumnOption::Ephemeral(None)))
             } else {
                 Ok(Some(ColumnOption::Ephemeral(Some(
-                    self.parse_column_option_expr()?,
+                    self.parse_expr()?,
                 ))))
             }
         } else if self.parse_keywords(&[Keyword::PRIMARY, Keyword::KEY]) {
@@ -8929,7 +8929,7 @@ impl<'a> Parser<'a> {
         } else if self.parse_keywords(&[Keyword::ON, Keyword::UPDATE])
             && dialect_of!(self is MySqlDialect | GenericDialect)
         {
-            let expr = self.parse_column_option_expr()?;
+            let expr = self.parse_expr()?;
             Ok(Some(ColumnOption::OnUpdate(expr)))
         } else if self.parse_keyword(Keyword::GENERATED) {
             self.parse_optional_column_option_generated()
@@ -8948,7 +8948,7 @@ impl<'a> Parser<'a> {
             && dialect_of!(self is MySqlDialect | GenericDialect)
         {
             Ok(Some(ColumnOption::Srid(Box::new(
-                self.parse_column_option_expr()?,
+                self.parse_expr()?,
             ))))
         } else if self.parse_keyword(Keyword::IDENTITY)
             && dialect_of!(self is MsSqlDialect | GenericDialect)
@@ -8989,30 +8989,6 @@ impl<'a> Parser<'a> {
         } else {
             Ok(None)
         }
-    }
-
-    /// Parse column option expression.
-    ///
-    /// When parsing in [ParserState::ColumnDefinition], `NOT NULL` is not treated
-    /// as an expression (so it can be parsed as a column constraint). However,
-    /// parenthesized expressions switch to [ParserState::Normal], so `NOT NULL`
-    /// inside parens is correctly parsed as `IS NOT NULL` for dialects that
-    /// support this syntax (e.g., SQLite, DuckDB).
-    ///
-    /// For example, consider these `CREATE TABLE` statements:
-    /// ```sql
-    /// CREATE TABLE foo (abc BOOL DEFAULT (42 NOT NULL) NOT NULL);
-    /// ```
-    /// vs
-    /// ```sql
-    /// CREATE TABLE foo (abc BOOL NOT NULL);
-    /// ```
-    ///
-    /// In the first we should parse the inner portion of `(42 NOT NULL)` as [Expr::IsNotNull],
-    /// whereas in both statements that trailing `NOT NULL` should only be parsed as a
-    /// [ColumnOption::NotNull].
-    fn parse_column_option_expr(&mut self) -> Result<Expr, ParserError> {
-        self.parse_expr()
     }
 
     pub(crate) fn parse_tag(&mut self) -> Result<Tag, ParserError> {
