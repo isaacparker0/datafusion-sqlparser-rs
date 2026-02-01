@@ -1818,7 +1818,14 @@ impl<'a> Parser<'a> {
                     } else if let Some(lambda) = self.try_parse_lambda()? {
                         return Ok(lambda);
                     } else {
-                        let exprs = self.parse_comma_separated(Parser::parse_expr)?;
+                        // Parentheses create a "normal" expression context.
+                        // This ensures that e.g. `NOT NULL` inside parens is parsed
+                        // as `IS NOT NULL` (for dialects that support it), while
+                        // `NOT NULL` outside parens in a column definition context
+                        // remains a column constraint.
+                        let exprs = self.with_state(ParserState::Normal, |p| {
+                            p.parse_comma_separated(Parser::parse_expr)
+                        })?;
                         match exprs.len() {
                             0 => return Err(ParserError::ParserError(
                                 "Internal parser error: parse_comma_separated returned empty list"
@@ -8984,9 +8991,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// When parsing some column option expressions we need to revert to [ParserState::Normal] since
-    /// `NOT NULL` is allowed as an alias for `IS NOT NULL`.
-    /// In those cases we use this helper instead of calling [Parser::parse_expr] directly.
+    /// Parse column option expression.
+    ///
+    /// When parsing in [ParserState::ColumnDefinition], `NOT NULL` is not treated
+    /// as an expression (so it can be parsed as a column constraint). However,
+    /// parenthesized expressions switch to [ParserState::Normal], so `NOT NULL`
+    /// inside parens is correctly parsed as `IS NOT NULL` for dialects that
+    /// support this syntax (e.g., SQLite, DuckDB).
     ///
     /// For example, consider these `CREATE TABLE` statements:
     /// ```sql
@@ -8998,23 +9009,10 @@ impl<'a> Parser<'a> {
     /// ```
     ///
     /// In the first we should parse the inner portion of `(42 NOT NULL)` as [Expr::IsNotNull],
-    /// whereas is both statements that trailing `NOT NULL` should only be parsed as a
+    /// whereas in both statements that trailing `NOT NULL` should only be parsed as a
     /// [ColumnOption::NotNull].
     fn parse_column_option_expr(&mut self) -> Result<Expr, ParserError> {
-        if self.peek_token_ref().token == Token::LParen {
-            let mut expr = self.with_state(ParserState::Normal, |p| p.parse_prefix())?;
-            expr = self.parse_compound_expr(expr, vec![])?;
-            loop {
-                let next_precedence = self.get_next_precedence()?;
-                if next_precedence == 0 || self.peek_token_ref().token == Token::Period {
-                    break;
-                }
-                expr = self.parse_infix(expr, next_precedence)?;
-            }
-            Ok(expr)
-        } else {
-            Ok(self.parse_expr()?)
-        }
+        self.parse_expr()
     }
 
     pub(crate) fn parse_tag(&mut self) -> Result<Tag, ParserError> {
